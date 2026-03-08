@@ -1,0 +1,11 @@
+[Unit]
+Description=Whisper Dictation Server
+After=default.target
+
+[Service]
+ExecStart=/home/alexter33/whisper-env/bin/python3 /home/alexter33/whisper-server.py
+Restart=on-failure
+Environment=PATH=/home/alexter33/whisper-env/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
