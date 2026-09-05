@@ -2,6 +2,8 @@
 
 Dictée vocale locale en français sur Fedora avec Whisper (OpenAI) et CUDA.
 
+> ⚠️ **État actuel : cassé sur Fedora.** Le service tourne toujours (`systemctl --user status` le montre actif) mais la chaîne enregistrement → transcription → injection ne fonctionne plus en pratique, probablement lié aux changements de driver NVIDIA côté Fedora (voir section Drivers). Le repo est conservé comme base pour une reconstruction propre sur **Kubuntu**, pas pour un fix rapide sur Fedora.
+
 ## Fonctionnalités
 
 - Transcription vocale 100% locale (aucune donnée envoyée sur internet)
@@ -16,7 +18,7 @@ Dictée vocale locale en français sur Fedora avec Whisper (OpenAI) et CUDA.
 - GPU NVIDIA (testé sur GTX 1070 Ti)
 - Fedora 43 avec KDE Plasma
 
-## Installation
+## Installation (procédure Fedora d'origine — à revalider sous Kubuntu)
 
 ### 1. Drivers NVIDIA
 
@@ -35,7 +37,7 @@ sudo dracut --force
 sudo reboot
 ```
 
-> ⚠️ La GTX 1070 Ti nécessite le driver **470xx** et non le 580 (open source) qui ne supporte pas cette carte.
+> ⚠️ **Correction a posteriori** : l'indication ci-dessus (driver 470xx obligatoire) était fausse — c'était en fait un reliquat legacy inutile pour du Pascal (GP104). Le driver **mainline standard** (580.173.02 côté RPM Fusion Fedora) fonctionne bien sur GTX 1070 Ti. Sur Kubuntu, partir du driver NVIDIA standard proposé par `ubuntu-drivers` / le PPA `graphics-drivers`, pas d'une branche legacy, sauf blocage constaté.
 
 ### 2. Désactiver l'IOMMU
 
@@ -63,6 +65,10 @@ pip install torch==2.0.1+cu117 torchvision==0.15.2+cu117 torchaudio==2.0.2+cu117
 pip install openai-whisper "numpy<2"
 ```
 
+> Ces pins torch/cu117 datent de 2023 (mars) : à refaire avec des versions torch actuelles compatibles CUDA sur Kubuntu, ne pas copier-coller tel quel.
+
+**Alternative à évaluer pour la reconstruction : [faster-whisper](https://github.com/SYSTRAN/faster-whisper)** (basé sur CTranslate2), déjà testé en parallèle sur cette machine — sensiblement plus rapide et moins gourmand en VRAM qu'`openai-whisper` pour un usage dictée en temps quasi réel. Change l'API de `whisper-server.py` (`WhisperModel(...).transcribe(...)` au lieu de `whisper.load_model(...)`) mais pas l'architecture (socket + modèle chargé en VRAM).
+
 ### 5. Installer les fichiers
 
 ```bash
@@ -89,6 +95,8 @@ Paramètres → Raccourcis → Ajouter un nouveau → Commande :
 Assigner à la touche de ton choix (ex: Ctrl+Alt+S).
 
 > ⚠️ Remplace `TON_USER` par ton nom d'utilisateur.
+
+> ⚠️ **X11 requis pour `xdotool`.** Si la session Kubuntu (ou Fedora) tourne en Wayland, `xdotool type` ne fonctionne pas nativement. Solutions pour la reconstruction : `ydotool` (démon système + permissions uinput) ou `wtype`, à la place de `xdotool` dans `whisper-dictee.sh`. À trancher selon la session par défaut de Kubuntu (KDE Plasma sous Kubuntu peut tourner en X11 ou Wayland selon la version).
 
 ## Utilisation
 

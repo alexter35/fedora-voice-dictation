@@ -3,6 +3,12 @@
 # ============================================================
 # fedora-voice-dictation - Script d'installation automatique
 # Testé sur Fedora 43 KDE Plasma avec GTX 1070 Ti
+#
+# ⚠️ RÉFÉRENCE FEDORA UNIQUEMENT — ne pas lancer tel quel sur
+# Kubuntu (dnf/rpm, akmods, driver 470xx légataire tous
+# spécifiques Fedora). Voir README pour les points à refaire
+# pour la reconstruction Kubuntu (driver, xdotool/Wayland,
+# torch/faster-whisper).
 # ============================================================
 
 set -e
