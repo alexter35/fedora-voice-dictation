@@ -1,121 +1,83 @@
 #!/bin/bash
-
 # ============================================================
-# fedora-voice-dictation - Script d'installation automatique
-# Testé sur Fedora 43 KDE Plasma avec GTX 1070 Ti
-#
-# ⚠️ RÉFÉRENCE FEDORA UNIQUEMENT — ne pas lancer tel quel sur
-# Kubuntu (dnf/rpm, akmods, driver 470xx légataire tous
-# spécifiques Fedora). Voir README pour les points à refaire
-# pour la reconstruction Kubuntu (driver, xdotool/Wayland,
-# torch/faster-whisper).
+#  Voice dictation — installation Kubuntu (Ubuntu 26.04, KDE/Wayland)
+#  Portage du repo Fedora d'origine.
+#  Cible testée : Ryzen 5700G + GTX 1070 Ti, NVIDIA 580, Python 3.14.
 # ============================================================
+set -euo pipefail
 
-set -e
-
-USER_HOME=$HOME
-VENV_PATH="$USER_HOME/whisper-env"
 REPO_PATH="$(cd "$(dirname "$0")" && pwd)"
+VENV="$HOME/whisper-env"
+PYBIN="${PYBIN:-python3}"
 
-echo "============================================"
-echo "  Fedora Voice Dictation - Installation"
-echo "============================================"
-echo ""
+echo "== [1/6] Paquets système (apt) =="
+sudo apt-get update
+sudo apt-get install -y \
+  "$($PYBIN -c 'import sys;print(f"python{sys.version_info.major}.{sys.version_info.minor}-venv")')" \
+  pipewire-bin socat ffmpeg ydotool wl-clipboard libnotify-bin
 
-# ------------------------------------------------------------
-# Étape 1 — RPM Fusion
-# ------------------------------------------------------------
-echo "[1/8] Activation de RPM Fusion..."
-sudo dnf install -y \
-  https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm \
-  https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm \
-  2>/dev/null || echo "RPM Fusion déjà activé, on continue."
+echo "== [2/6] Service ydotool (injection clavier Wayland) =="
+systemctl --user enable --now ydotool.service || true
+if ! test -w /dev/uinput; then
+  echo "  /dev/uinput non accessible -> règle udev + groupe input"
+  echo 'KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"' \
+    | sudo tee /etc/udev/rules.d/80-uinput.rules >/dev/null
+  sudo udevadm control --reload-rules && sudo udevadm trigger /dev/uinput || true
+  sudo usermod -aG input "$USER"
+  echo "  ⚠️  déconnecte/reconnecte ta session pour que le groupe 'input' prenne effet"
+fi
 
-# ------------------------------------------------------------
-# Étape 2 — Drivers NVIDIA 470xx
-# ------------------------------------------------------------
-echo "[2/8] Installation des drivers NVIDIA 470xx..."
-sudo bash -c 'echo "blacklist nouveau" >> /etc/modprobe.d/blacklist.conf' 2>/dev/null || true
-sudo bash -c 'echo "install nouveau /bin/false" >> /etc/modprobe.d/nouveau-blacklist.conf' 2>/dev/null || true
-sudo dnf install -y akmod-nvidia-470xx xorg-x11-drv-nvidia-470xx \
-  xorg-x11-drv-nvidia-470xx-cuda xorg-x11-drv-nvidia-470xx-cuda-libs
+echo "== [3/6] Environnement Python ($($PYBIN --version)) =="
+[ -d "$VENV" ] || "$PYBIN" -m venv "$VENV"
+"$VENV/bin/pip" install --upgrade pip wheel
+"$VENV/bin/pip" install -r "$REPO_PATH/requirements.txt"
 
-echo "  Compilation du module kernel (peut prendre 5 minutes)..."
-sudo akmods --force
-sudo dracut --force
+echo "== [4/6] Fichiers =="
+install -m 644 "$REPO_PATH/whisper-server.py"  "$HOME/whisper-server.py"
+install -m 755 "$REPO_PATH/whisper-dictee.sh" "$HOME/whisper-dictee.sh"
+if [ ! -f "$HOME/.config/whisper-dictee.conf" ]; then
+  mkdir -p "$HOME/.config"
+  cat > "$HOME/.config/whisper-dictee.conf" <<'EOF'
+# Config dictée vocale — lignes VAR=valeur (lues par le service ET le script).
+WHISPER_MODEL=small
+WHISPER_DEVICE=cuda
+WHISPER_COMPUTE_TYPE=int8
+WHISPER_LANGUAGE=fr
+# DICTEE_INJECT=type        # type | clipboard | both
+# DICTEE_SOURCE=            # nom d'une source PipeWire précise (pw-record --list-targets)
+# DICTEE_NOTIFY=1
+EOF
+fi
 
-# ------------------------------------------------------------
-# Étape 3 — Règle udev nvidia-uvm
-# ------------------------------------------------------------
-echo "[3/8] Configuration udev nvidia-uvm..."
-sudo bash -c 'echo "KERNEL==\"nvidia_uvm\", RUN+=\"/usr/bin/nvidia-modprobe -u\"" > /etc/udev/rules.d/70-nvidia.rules'
-sudo udevadm control --reload-rules
-
-# ------------------------------------------------------------
-# Étape 4 — Dépendances système
-# ------------------------------------------------------------
-echo "[4/8] Installation des dépendances système..."
-sudo dnf install -y python3.11 sox xdotool wl-clipboard socat ffmpeg --allowerasing
-
-# ------------------------------------------------------------
-# Étape 5 — Environnement Python
-# ------------------------------------------------------------
-echo "[5/8] Création de l'environnement Python 3.11..."
-python3.11 -m venv "$VENV_PATH"
-source "$VENV_PATH/bin/activate"
-
-echo "  Installation de PyTorch CUDA 11.7..."
-pip install torch==2.0.1+cu117 torchvision==0.15.2+cu117 torchaudio==2.0.2+cu117 \
-  --extra-index-url https://download.pytorch.org/whl/cu117 --quiet
-
-echo "  Installation de Whisper..."
-pip install openai-whisper "numpy<2" --quiet
-
-deactivate
-
-# ------------------------------------------------------------
-# Étape 6 — Copie des fichiers
-# ------------------------------------------------------------
-echo "[6/8] Copie des fichiers..."
-cp "$REPO_PATH/whisper-server.py" "$USER_HOME/"
-cp "$REPO_PATH/whisper-dictee.sh" "$USER_HOME/"
-chmod +x "$USER_HOME/whisper-dictee.sh"
-
-# Adapter le chemin utilisateur dans les fichiers
-sed -i "s|/home/alexter33|$USER_HOME|g" "$USER_HOME/whisper-server.py"
-sed -i "s|/home/alexter33|$USER_HOME|g" "$USER_HOME/whisper-dictee.sh"
-
-# ------------------------------------------------------------
-# Étape 7 — Service systemd
-# ------------------------------------------------------------
-echo "[7/8] Configuration du service systemd..."
-mkdir -p "$USER_HOME/.config/systemd/user"
-cp "$REPO_PATH/whisper-server.service" "$USER_HOME/.config/systemd/user/"
-sed -i "s|/home/alexter33|$USER_HOME|g" "$USER_HOME/.config/systemd/user/whisper-server.service"
-
+echo "== [5/6] Service systemd utilisateur =="
+mkdir -p "$HOME/.config/systemd/user"
+install -m 644 "$REPO_PATH/whisper-server.service" \
+  "$HOME/.config/systemd/user/whisper-server.service"
 systemctl --user daemon-reload
-systemctl --user enable whisper-server.service
+systemctl --user enable --now whisper-server.service
 
-# ------------------------------------------------------------
-# Étape 8 — Résumé
-# ------------------------------------------------------------
-echo ""
-echo "[8/8] Installation terminée !"
-echo ""
-echo "============================================"
-echo "  IMPORTANT — Actions manuelles requises"
-echo "============================================"
-echo ""
-echo "1. Dans le BIOS MSI B550-A PRO :"
-echo "   Advanced → AMD CBS → NBIO → IOMMU → Disabled"
-echo ""
-echo "2. Raccourci clavier KDE :"
-echo "   Paramètres → Raccourcis → Ajouter un nouveau → Commande :"
-echo "   /bin/bash -c '$USER_HOME/whisper-dictee.sh'"
-echo ""
-echo "3. Redémarrer la machine :"
-echo "   sudo reboot"
-echo ""
-echo "Après le redémarrage, le service Whisper démarrera automatiquement."
-echo "Vérifie avec : systemctl --user status whisper-server.service"
-echo ""
+echo "== [6/6] Vérification =="
+sleep 2
+systemctl --user --no-pager --lines=15 status whisper-server.service || true
+
+cat <<EOF
+
+────────────────────────────────────────────────────────────
+Installation terminée.
+
+Raccourci clavier KDE :
+  Configuration du système → Raccourcis → Raccourcis personnalisés
+  → Modifier → Nouveau → Commande/URL
+  Action :  $HOME/whisper-dictee.sh
+  Déclencheur : la touche de ton choix (ex. Méta+D)
+
+Utilisation : raccourci pour parler, raccourci à nouveau pour
+transcrire et injecter le texte dans le champ actif.
+
+Changer de modèle (medium/large-v3) : éditer
+  ~/.config/whisper-dictee.conf   puis
+  systemctl --user restart whisper-server.service
+
+Logs : journalctl --user -u whisper-server.service -f
+────────────────────────────────────────────────────────────
+EOF

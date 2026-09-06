@@ -1,11 +1,17 @@
 [Unit]
-Description=Whisper Dictation Server
-After=default.target
+Description=Serveur de dictée Whisper (modèle chargé en VRAM)
+Documentation=https://github.com/… fedora-voice-dictation (portage Kubuntu)
+After=graphical-session.target
+Wants=ydotool.service
 
 [Service]
-ExecStart=/home/alexter33/whisper-env/bin/python3 /home/alexter33/whisper-server.py
+Type=simple
+ExecStart=%h/whisper-env/bin/python3 %h/whisper-server.py
 Restart=on-failure
-Environment=PATH=/home/alexter33/whisper-env/bin:/usr/bin:/bin
+RestartSec=3
+# Fichier de config optionnel (WHISPER_MODEL=…, etc.)
+EnvironmentFile=-%h/.config/whisper-dictee.conf
+# Le serveur ajoute lui-même les libs CUDA pip à LD_LIBRARY_PATH.
 
 [Install]
 WantedBy=default.target
