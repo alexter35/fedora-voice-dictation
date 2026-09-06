@@ -1,141 +1,139 @@
-# fedora-voice-dictation 🎙️
+# voice-dictation 🎙️ (portage Kubuntu)
 
-Dictée vocale locale en français sur Fedora avec Whisper (OpenAI) et CUDA.
+Dictée vocale locale en français, avec Whisper accéléré CUDA. 100 % hors-ligne :
+aucun son ni texte n'est envoyé sur internet.
 
-> ⚠️ **État actuel : cassé sur Fedora.** Le service tourne toujours (`systemctl --user status` le montre actif) mais la chaîne enregistrement → transcription → injection ne fonctionne plus en pratique, probablement lié aux changements de driver NVIDIA côté Fedora (voir section Drivers). Le repo est conservé comme base pour une reconstruction propre sur **Kubuntu**, pas pour un fix rapide sur Fedora.
+> **Historique :** repo écrit à l'origine pour Fedora 43 (openai-whisper + PyTorch
+> cu117 + driver NVIDIA 470xx + `xdotool`). Cassé après des mises à jour Fedora.
+> **Réécrit pour Kubuntu (Ubuntu 26.04 LTS, KDE Plasma / Wayland)** en 2026-09 :
+> backend `faster-whisper` (CTranslate2, sans PyTorch), capture PipeWire,
+> injection presse-papier + Ctrl+V simulé (Wayland). L'ancienne procédure Fedora
+> est en fin de fichier.
 
-## Fonctionnalités
+## Fonctionnement
 
-- Transcription vocale 100% locale (aucune donnée envoyée sur internet)
-- Accélération GPU via CUDA (testé sur GTX 1070 Ti)
-- Modèle Whisper chargé en permanence en VRAM (réponse quasi instantanée)
-- Mode toggle : un raccourci pour démarrer, un autre pour arrêter et transcrire
-- Injection automatique du texte dans le champ actif
-- Démarrage automatique au login via systemd
-
-## Prérequis matériel
-
-- GPU NVIDIA (testé sur GTX 1070 Ti)
-- Fedora 43 avec KDE Plasma
-
-## Installation (procédure Fedora d'origine — à revalider sous Kubuntu)
-
-### 1. Drivers NVIDIA
-
-Activer RPM Fusion :
-```bash
-sudo dnf install https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm \
-  https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
+```
+whisper-server.py       serveur ; garde le modèle Whisper en VRAM (réponse quasi immédiate)
+whisper-dictee.sh       script "toggle" : 1er appel = enregistre, 2e = transcrit + injecte
+whisper-server.service  service systemd utilisateur (démarre au login)
 ```
 
-Blacklister nouveau et installer les drivers :
-```bash
-sudo bash -c 'echo "blacklist nouveau" >> /etc/modprobe.d/blacklist.conf'
-sudo dnf install akmod-nvidia-470xx xorg-x11-drv-nvidia-470xx xorg-x11-drv-nvidia-470xx-cuda
-sudo akmods --force
-sudo dracut --force
-sudo reboot
-```
+Le serveur écoute sur un socket UNIX (`$XDG_RUNTIME_DIR/whisper.sock`). Le script
+enregistre le micro avec `pw-record`, envoie le `.wav` au serveur, récupère le
+texte, le met dans le presse-papier (`wl-copy`) et simule **Ctrl+V** dans la
+fenêtre active (`ydotool key`, codes de touches evdev → indépendant de la
+disposition clavier). `ydotool type` a été écarté : il frappe des positions
+US-QWERTY, ce qui mélange le texte sur un clavier AZERTY. `wtype` ne marche pas
+sous KWin (protocole *virtual-keyboard* non exposé).
 
-> ⚠️ **Correction a posteriori** : l'indication ci-dessus (driver 470xx obligatoire) était fausse — c'était en fait un reliquat legacy inutile pour du Pascal (GP104). Le driver **mainline standard** (580.173.02 côté RPM Fusion Fedora) fonctionne bien sur GTX 1070 Ti. Sur Kubuntu, partir du driver NVIDIA standard proposé par `ubuntu-drivers` / le PPA `graphics-drivers`, pas d'une branche legacy, sauf blocage constaté.
+## Prérequis
 
-### 2. Désactiver l'IOMMU
+- GPU NVIDIA (testé : GTX 1070 Ti / Pascal, driver 580, sans runtime CUDA système —
+  les libs CUDA 12 sont tirées en paquets pip dans le venv).
+- Kubuntu / KDE Plasma, session **Wayland** (testé) ou X11. L'injection utilise
+  `wl-clipboard` + `ydotool` (via `/dev/uinput`, indépendant du serveur d'affichage).
+- `/dev/nvidia-uvm` présent (`nvidia-smi` OK). Reboot si absent après install du driver.
 
-Dans le BIOS : **Advanced → AMD CBS → NBIO → IOMMU → Disabled**
-
-Créer la règle udev pour nvidia-uvm :
-```bash
-sudo bash -c 'echo "KERNEL==nvidia_uvm, RUN+=/usr/bin/nvidia-modprobe -u" > /etc/udev/rules.d/70-nvidia.rules'
-sudo udevadm control --reload-rules
-```
-
-### 3. Dépendances système
+## Installation
 
 ```bash
-sudo dnf install python3.11 sox xdotool wl-clipboard socat ffmpeg --allowerasing
+./install.sh
 ```
 
-### 4. Environnement Python et Whisper
+Le script : installe les paquets apt (`pipewire-bin socat ffmpeg ydotool
+wl-clipboard libnotify-bin` + `python3.x-venv`), active `ydotool.service`, crée
+`~/whisper-env`, installe `faster-whisper` + libs CUDA (`requirements.txt`), copie
+les fichiers dans `$HOME`, active le service utilisateur.
 
-```bash
-python3.11 -m venv ~/whisper-env
-source ~/whisper-env/bin/activate
-pip install torch==2.0.1+cu117 torchvision==0.15.2+cu117 torchaudio==2.0.2+cu117 \
-  --extra-index-url https://download.pytorch.org/whl/cu117
-pip install openai-whisper "numpy<2"
-```
-
-> Ces pins torch/cu117 datent de 2023 (mars) : à refaire avec des versions torch actuelles compatibles CUDA sur Kubuntu, ne pas copier-coller tel quel.
-
-**Alternative à évaluer pour la reconstruction : [faster-whisper](https://github.com/SYSTRAN/faster-whisper)** (basé sur CTranslate2), déjà testé en parallèle sur cette machine — sensiblement plus rapide et moins gourmand en VRAM qu'`openai-whisper` pour un usage dictée en temps quasi réel. Change l'API de `whisper-server.py` (`WhisperModel(...).transcribe(...)` au lieu de `whisper.load_model(...)`) mais pas l'architecture (socket + modèle chargé en VRAM).
-
-### 5. Installer les fichiers
-
-```bash
-cp whisper-server.py ~/
-cp whisper-dictee.sh ~/
-chmod +x ~/whisper-dictee.sh
-mkdir -p ~/.config/systemd/user
-cp whisper-server.service ~/.config/systemd/user/
-```
-
-### 6. Activer les services
-
-```bash
-systemctl --user daemon-reload
-systemctl --user enable --now whisper-server.service
-```
-
-### 7. Raccourci clavier KDE
-
-Paramètres → Raccourcis → Ajouter un nouveau → Commande :
-```
-/bin/bash -c '/home/TON_USER/whisper-dictee.sh'
-```
-Assigner à la touche de ton choix (ex: Ctrl+Alt+S).
-
-> ⚠️ Remplace `TON_USER` par ton nom d'utilisateur.
-
-> ⚠️ **X11 requis pour `xdotool`.** Si la session Kubuntu (ou Fedora) tourne en Wayland, `xdotool type` ne fonctionne pas nativement. Solutions pour la reconstruction : `ydotool` (démon système + permissions uinput) ou `wtype`, à la place de `xdotool` dans `whisper-dictee.sh`. À trancher selon la session par défaut de Kubuntu (KDE Plasma sous Kubuntu peut tourner en X11 ou Wayland selon la version).
+Puis, **manuellement**, le raccourci clavier KDE :
+Configuration du système → Raccourcis → *Raccourcis personnalisés* → Modifier →
+Nouveau → Commande/URL. Action : `~/whisper-dictee.sh`. Déclencheur : au choix
+(ex. `Méta+D`).
 
 ## Utilisation
 
-1. Clique dans n'importe quel champ de texte
-2. Appuie sur le raccourci → l'enregistrement démarre
-3. Parle
-4. Appuie à nouveau sur le raccourci → transcription et injection automatique
+1. Clic dans un champ de texte.
+2. Raccourci → l'enregistrement démarre (notification 🎙️).
+3. Parle.
+4. Raccourci à nouveau → transcription puis collage automatique du texte
+   (Ctrl+V ; dans un terminal, mets `DICTEE_INJECT=clipboard` et colle à la main).
 
-## Architecture
+## Configuration — `~/.config/whisper-dictee.conf`
 
-```
-whisper-server.py     - Serveur socket qui garde le modèle en VRAM
-whisper-dictee.sh     - Script toggle enregistrement/transcription
-whisper-server.service - Service systemd utilisateur
-```
+Lu à la fois par le service et par le script. Lignes `VAR=valeur` :
 
-## Modèles disponibles
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `WHISPER_MODEL` | `small` | `tiny` / `base` / `small` / `medium` / `large-v3` |
+| `WHISPER_DEVICE` | `cuda` | `cuda` ou `cpu` |
+| `WHISPER_COMPUTE_TYPE` | `int8` | Pascal : garder `int8` (pas de float16 utile) |
+| `WHISPER_LANGUAGE` | `fr` | vide = détection auto |
+| `DICTEE_INJECT` | `type` | `type` = presse-papier + Ctrl+V · `clipboard` = copie seule · `keys` = frappe `ydotool type` brute (positions US-QWERTY) |
+| `DICTEE_SOURCE` | auto | source PipeWire précise (`pw-record --list-targets`) |
+| `DICTEE_NOTIFY` | `1` | notifications KDE |
 
-| Modèle | Qualité | VRAM |
-|--------|---------|------|
-| tiny   | Correct | ~1Go |
-| small  | Bon     | ~2Go |
-| medium | Très bon| ~5Go |
-| large  | Excellent| ~10Go|
+Après modification : `systemctl --user restart whisper-server.service`.
 
-Modifier `whisper-server.py` ligne `load_model("small", ...)` pour changer de modèle.
+### VRAM par modèle (int8, GTX 1070 Ti 8 Go)
+
+| Modèle | Qualité | VRAM approx. |
+|---|---|---|
+| `small` | bon | ~0,5 Go |
+| `medium` | très bon | ~1,5 Go |
+| `large-v3` | excellent | ~3 Go |
+
+`large-v3` en int8 tient largement dans les 8 Go et reste rapide en dictée courte.
 
 ## Dépannage
 
-**Le service ne démarre pas :**
 ```bash
 systemctl --user status whisper-server.service
-journalctl --user -u whisper-server.service
+journalctl --user -u whisper-server.service -f
 ```
 
-**CUDA non détecté :**
+- **`libcublas.so.12 is not found`** : `~/whisper-env/bin/pip install -r requirements.txt`
+  n'a pas installé `nvidia-cublas-cu12` / `nvidia-cudnn-cu12`. Le serveur ajoute
+  seul leur dossier à `LD_LIBRARY_PATH` (re-exec au démarrage).
+- **Rien ne se tape** : `systemctl --user status ydotool.service` ; vérifier l'accès
+  à `/dev/uinput` (`getfacl /dev/uinput` doit lister l'utilisateur, ou être dans le
+  groupe `input` — relogin après `install.sh` si le groupe vient d'être ajouté).
+- **Texte mélangé / mauvaises lettres** (« comment » → « co,,ent ») : `DICTEE_INJECT`
+  est sur `keys`, qui frappe des positions US-QWERTY. Repasser sur `type` (défaut,
+  presse-papier + Ctrl+V, insensible à la disposition clavier).
+- **Rien ne se colle dans un terminal** : le terminal utilise Ctrl+Maj+V, pas Ctrl+V.
+  Mettre `DICTEE_INJECT=clipboard` et coller à la main.
+- **`Serveur Whisper injoignable`** : le service n'est pas lancé, ou `XDG_RUNTIME_DIR`
+  diffère entre le service et la session (normalement `/run/user/$UID`).
+- **CUDA non détecté** : `ls /dev/nvidia-uvm` ; `nvidia-smi`. Reboot si `nvidia-uvm`
+  absent.
+- **Transcription vide** : le filtre VAD a tout coupé (bruit/silence) — parler plus
+  près du micro, ou régler `DICTEE_SOURCE`.
+
+## Désinstallation
+
 ```bash
-ls /dev/nvidia-uvm  # doit exister
-nvidia-smi          # doit afficher la carte
+systemctl --user disable --now whisper-server.service
+rm -f ~/whisper-server.py ~/whisper-dictee.sh \
+      ~/.config/systemd/user/whisper-server.service \
+      ~/.config/whisper-dictee.conf
+rm -rf ~/whisper-env
 ```
 
-**Reboot nécessaire** si `/dev/nvidia-uvm` est absent.
+---
+
+## Annexe — procédure Fedora d'origine (obsolète, pour mémoire)
+
+<details>
+<summary>Fedora 43, openai-whisper + PyTorch cu117 + NVIDIA 470xx</summary>
+
+- RPM Fusion + `akmod-nvidia-470xx` — le **470xx était une erreur** (reliquat legacy) :
+  le driver mainline (580) marche sur Pascal. Sous Kubuntu : `ubuntu-drivers autoinstall`
+  ou le PPA `graphics-drivers`.
+- `sudo dnf install python3.11 sox xdotool wl-clipboard socat ffmpeg`
+- venv + `pip install torch==2.0.1+cu117 … openai-whisper "numpy<2"` — **pins 2023**,
+  ne pas réutiliser.
+- `xdotool type` pour l'injection — **KO en Wayland**, remplacé par `ydotool`.
+- Réglage BIOS de l'époque : *AMD CBS → NBIO → IOMMU → Disabled*. Non requis pour ce
+  portage (et hors périmètre : on ne touche pas au BIOS de ce poste).
+
+</details>

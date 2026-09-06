@@ -1,10 +1,9 @@
-# Pins d'origine (mars 2023-2024, Fedora + CUDA 11.7) — datés, à refaire
-# avec des versions torch actuelles lors de la reconstruction Kubuntu.
-torch==2.0.1+cu117
-torchvision==0.15.2+cu117
-torchaudio==2.0.2+cu117
-openai-whisper
-numpy<2
+# Portage Kubuntu (2026-09) — Python 3.14, GTX 1070 Ti (Pascal), NVIDIA 580.
+# Backend faster-whisper / CTranslate2 : pas de PyTorch.
+faster-whisper==1.2.1
 
-# Alternative à évaluer pour la v2 (plus rapide, moins de VRAM) :
-# faster-whisper
+# Libs CUDA 12 requises par CTranslate2, absentes du système (seul le driver
+# est installé). Fournies en paquets pip, isolées dans le venv (~1,3 Go).
+# Pascal ne fait pas de float16 utile -> on tourne en int8, cuDNN 9 suffit.
+nvidia-cublas-cu12
+nvidia-cudnn-cu12>=9,<10
