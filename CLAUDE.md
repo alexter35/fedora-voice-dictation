@@ -2,9 +2,10 @@
 
 ## État (2026-09-06) — ✅ OPÉRATIONNEL. Raccourci Meta+D actif, injection presse-papier+Ctrl+V, testé à la voix réelle.
 
-Repo `fedora-voice-dictation-main/` : dictée vocale locale FR, Whisper accéléré CUDA,
-100 % hors-ligne. Écrit à l'origine pour Fedora 43, **cassé** après MàJ Fedora. Réécrit
-pour **Kubuntu 26.04 (Plasma 6.6 / Wayland)**.
+Repo `alexter35/fedora-voice-dictation` (clone : `~/kubuntu-reinstall/fedora-voice-dictation/`) :
+dictée vocale locale FR, Whisper accéléré CUDA, 100 % hors-ligne. Écrit à l'origine pour
+Fedora 43, **cassé** après MàJ Fedora. Réécrit pour **Kubuntu 26.04 (Plasma 6.6 / Wayland)** ;
+`main` = portage Kubuntu depuis 2026-09-06, tag `v1-fedora` = dernier état Fedora.
 
 Sous-projet de `../CLAUDE.md` (bug reboot, CLOS) et `../kubuntu-reinstall.md` (réinstall).
 
